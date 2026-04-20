@@ -6,6 +6,10 @@ from deepface import DeepFace
 import threading
 import webbrowser
 import time
+import subprocess
+import sys
+import urllib.request
+import urllib.error
 try:
     from signature_server import run_server
 except Exception:
@@ -55,12 +59,7 @@ def main():
     args = parser.parse_args()
     id_path = args.id_path
 
-    print("Usando imagen:", id_path)
-
-    if not os.path.exists(id_path):
-        print("No se encontró la imagen de referencia.")
-        print("Coloca tu foto en: data/id.jpg")
-        return
+    print("Flujo: primero captura la cédula, luego la verificación en vivo.")
 
     cap = cv2.VideoCapture(0)
 
@@ -72,6 +71,8 @@ def main():
     print("SPACE -> capturar y verificar")
     print("Q o ESC -> salir\n")
 
+    mode = 'capture_id'  # other value: 'verify'
+
     while True:
 
         ret, frame = cap.read()
@@ -82,15 +83,34 @@ def main():
 
         h, w = frame.shape[:2]
 
+        if mode == 'capture_id':
+            instr = 'Alinea la CEDULA: sitúa la FOTO dentro del marco. SPACE->tomar CEDULA'
+        else:
+            instr = 'SPACE -> capturar y verificar rostro'
+
         cv2.putText(
             frame,
-            "SPACE para verificar rostro",
+            instr,
             (10, h - 10),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             (255, 255, 255),
             2
         )
+
+        # draw ID card guide when capturing ID (wide card and inner photo area)
+        if mode == 'capture_id':
+            card_w = int(w * 0.9)
+            card_h = int(h * 0.55)
+            card_x = int((w - card_w) / 2)
+            card_y = int((h - card_h) / 2)
+            cv2.rectangle(frame, (card_x, card_y), (card_x + card_w, card_y + card_h), (0, 255, 0), 2)
+            # inner photo area on the left side of the card (portrait)
+            photo_w = int(card_w * 0.25)
+            photo_h = int(card_h * 0.84)
+            photo_x = card_x + int(card_w * 0.04)
+            photo_y = card_y + int((card_h - photo_h) / 2)
+            cv2.rectangle(frame, (photo_x, photo_y), (photo_x + photo_w, photo_y + photo_h), (0, 255, 0), 2)
 
         cv2.imshow("Camara", frame)
 
@@ -108,6 +128,36 @@ def main():
 
             cv2.imwrite(tmp_path, frame)
 
+            if mode == 'capture_id':
+                # save full id image and crop the photo area from the framed region
+                os.makedirs('data', exist_ok=True)
+                full_path = os.path.join('data', 'id_full.jpg')
+                face_path = os.path.join('data', 'id_face.jpg')
+                cv2.imwrite(full_path, frame)
+
+                # compute same rectangles as drawn: card and inner photo area
+                card_w = int(w * 0.9)
+                card_h = int(h * 0.55)
+                card_x = int((w - card_w) / 2)
+                card_y = int((h - card_h) / 2)
+                photo_w = int(card_w * 0.25)
+                photo_h = int(card_h * 0.84)
+                photo_x = card_x + int(card_w * 0.04)
+                photo_y = card_y + int((card_h - photo_h) / 2)
+
+                cropped = frame[photo_y:photo_y + photo_h, photo_x:photo_x + photo_w]
+                if cropped is None or cropped.size == 0:
+                    print('Error: no se pudo recortar la foto de la cédula.')
+                else:
+                    cv2.imwrite(face_path, cropped)
+                    print(f'Foto de cédula guardada en {full_path}, recorte guardado en {face_path}')
+                    # switch to verification mode
+                    id_path = face_path
+                    mode = 'verify'
+                    # give user feedback and continue loop
+                    continue
+
+            # otherwise in verify mode, perform verification
             print("\nImagen capturada. Verificando...")
 
             result = verify_with_id(tmp_path, id_path)
@@ -139,24 +189,36 @@ def main():
                     except Exception:
                         pass
 
-                    # Iniciar el servidor de firma (si está disponible) y abrir la página
-                    def _start_sig():
-                        if run_server is None:
-                            print("No se encontró signature_server. Instala signature_server.py y Flask.")
-                            return
-                        run_server()
-
+                    # Start the signature server as a separate process and wait until it's ready
                     try:
-                        # start server in background non-daemon thread so it stays alive
-                        t = threading.Thread(target=_start_sig)
-                        t.start()
-                        # give server a moment to start and bind the camera
-                        time.sleep(0.8)
-                        # abrir navegador a la UI de firma
-                        webbrowser.open('http://127.0.0.1:5000/signature')
-                        print('Se abrió la interfaz de firma en el navegador.')
+                        sig_path = os.path.join(os.path.dirname(__file__), 'signature_server.py')
+                        if not os.path.exists(sig_path):
+                            print("No se encontró signature_server.py. Coloca el archivo en el proyecto.")
+                        else:
+                            python = sys.executable or 'python'
+                            # start detached process
+                            proc = subprocess.Popen([python, sig_path], cwd=os.path.dirname(__file__), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            url = 'http://127.0.0.1:5000/signature'
+                            connected = False
+                            for _ in range(30):
+                                try:
+                                    with urllib.request.urlopen(url, timeout=1) as resp:
+                                        if resp.status == 200:
+                                            connected = True
+                                            break
+                                except Exception:
+                                    time.sleep(0.3)
+
+                            if connected:
+                                try:
+                                    webbrowser.open(url)
+                                    print('Se abrió la interfaz de firma en el navegador.')
+                                except Exception as e:
+                                    print('No se pudo abrir la interfaz de firma en el navegador:', e)
+                            else:
+                                print('No se pudo conectar al servidor de firma en', url)
                     except Exception as e:
-                        print('No se pudo abrir la interfaz de firma:', e)
+                        print('Error iniciando servidor de firma:', e)
 
                     # romper el bucle principal para limpiar recursos y salir
                     break
