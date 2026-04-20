@@ -136,8 +136,8 @@ def main():
                 cv2.imwrite(full_path, frame)
 
                 # compute same rectangles as drawn: card and inner photo area
-                card_w = int(w * 0.9)
-                card_h = int(h * 0.55)
+                card_w = int(w * 0.905)
+                card_h = int(h * 0.555)
                 card_x = int((w - card_w) / 2)
                 card_y = int((h - card_h) / 2)
                 photo_w = int(card_w * 0.25)
