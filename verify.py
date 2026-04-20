@@ -3,6 +3,13 @@ import tempfile
 import argparse
 import cv2
 from deepface import DeepFace
+import threading
+import webbrowser
+import time
+try:
+    from signature_server import run_server
+except Exception:
+    run_server = None
 
 
 def verify_with_id(captured_path, id_path):
@@ -93,6 +100,7 @@ def main():
             break
 
         if key == 32:
+            print('SPACE detectado')
 
             # crear archivo temporal
             tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
@@ -122,6 +130,36 @@ def main():
 
                     msg = f"MATCH ✔ dist={distance:.3f}"
                     color = (0, 255, 0)
+
+                    # Liberar cámara y ventanas antes de iniciar servidor para que
+                    # el navegador pueda usar la cámara.
+                    try:
+                        cap.release()
+                        cv2.destroyAllWindows()
+                    except Exception:
+                        pass
+
+                    # Iniciar el servidor de firma (si está disponible) y abrir la página
+                    def _start_sig():
+                        if run_server is None:
+                            print("No se encontró signature_server. Instala signature_server.py y Flask.")
+                            return
+                        run_server()
+
+                    try:
+                        # start server in background non-daemon thread so it stays alive
+                        t = threading.Thread(target=_start_sig)
+                        t.start()
+                        # give server a moment to start and bind the camera
+                        time.sleep(0.8)
+                        # abrir navegador a la UI de firma
+                        webbrowser.open('http://127.0.0.1:5000/signature')
+                        print('Se abrió la interfaz de firma en el navegador.')
+                    except Exception as e:
+                        print('No se pudo abrir la interfaz de firma:', e)
+
+                    # romper el bucle principal para limpiar recursos y salir
+                    break
 
                 else:
 
