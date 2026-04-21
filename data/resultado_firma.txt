@@ -1,8 +1,8 @@
-=== 2026-04-20 19:29:31 ===
-Semáforo: VERDE (Movimiento detectado)
-Score de movimiento (máx): 0.1090
-Score de movimiento (prom): 0.0785
+=== 2026-04-20 19:52:36 ===
+Semáforo: VERDE (Match + Movimiento)
+Score de movimiento (máx): 0.2240
+Score de movimiento (prom): 0.1452
 Verificación con cédula: MATCH
-Distancia facial: 0.6607
-Mensaje: MATCH ✔ (Movimiento OK) dist=0.661
+Distancia facial: 0.5445
+Mensaje: MATCH ✔ (Movimiento OK) dist=0.545
 ----------------------------------------

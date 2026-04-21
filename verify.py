@@ -15,7 +15,7 @@ from datetime import datetime
 from itertools import combinations
 
 # ---------- CONFIGURACIÓN ----------
-UMBRAL_MOVIMIENTO = 0.1  # Ajusta este valor: más alto = más exigente (0.1 es bastante estricto)
+UMBRAL_MOVIMIENTO = 0.1  # Ajusta según pruebas (0.1 es estricto)
 # ---------------------------------
 
 try:
@@ -24,8 +24,10 @@ except Exception:
     run_server = None
 
 
+# ============================================================================
+# FUNCIÓN DE VERIFICACIÓN ORIGINAL (NO TOCAR)
+# ============================================================================
 def verify_with_id(captured_path, id_path):
-    """EXACTAMENTE IGUAL AL ORIGINAL - NO TOCAR"""
     try:
         if not os.path.exists(id_path):
             return {"error": f"No existe la imagen: {id_path}"}
@@ -45,11 +47,11 @@ def verify_with_id(captured_path, id_path):
         return {"error": str(e)}
 
 
+# ============================================================================
+# FUNCIONES PARA DETECCIÓN DE MOVIMIENTO (NO AFECTAN LA VERIFICACIÓN)
+# ============================================================================
 def compute_movement_score(frames, face_cascade):
-    """
-    Calcula la diferencia máxima entre cualquier par de frames (usando región del rostro).
-    Retorna (max_diff, mean_diff).
-    """
+    """Calcula la diferencia máxima entre cualquier par de frames (región del rostro)."""
     if len(frames) < 2:
         return 0.0, 0.0
 
@@ -58,7 +60,6 @@ def compute_movement_score(frames, face_cascade):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(80, 80))
         if len(faces) == 0:
-            # Si no hay rostro, usar toda la imagen (menos preciso pero no falla)
             rois.append(gray)
         else:
             (x, y, w, h) = max(faces, key=lambda rect: rect[2] * rect[3])
@@ -111,35 +112,31 @@ def save_log(result_info, log_path="data/resultado_firma.txt"):
         f.write("----------------------------------------\n")
 
 
+# ============================================================================
+# MAIN (CON FLUJO DE CÉDULA ORIGINAL + VERIFICACIÓN ACTIVA)
+# ============================================================================
 def main():
-    parser = argparse.ArgumentParser(
-        description='Comparar rostro de cámara con foto guardada (con detección de vida activa)'
-    )
-    parser.add_argument(
-        '--id',
-        dest='id_path',
-        default='data/id.jpg',
-        help='Ruta de la imagen de referencia'
-    )
+    parser = argparse.ArgumentParser(description='Comparar rostro de cámara con foto guardada (con detección de vida activa)')
+    parser.add_argument('--id', dest='id_path', default='data/id.jpg', help='Ruta de la imagen de referencia')
     args = parser.parse_args()
     id_path = args.id_path
 
-    print("Flujo: primero captura la cédula, luego verificación activa con movimientos guiados.")
-    print(f"Umbral de movimiento: {UMBRAL_MOVIMIENTO} (mayor o igual = movimiento detectado)")
+    print("Flujo: captura cédula -> verificación activa con movimientos guiados.")
+    print(f"Umbral de movimiento: {UMBRAL_MOVIMIENTO} (>= movimiento detectado)")
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("No se pudo abrir la cámara.")
         return
 
-    # No reducimos resolución para mantener calidad
+    # No reducir resolución (se mantiene calidad original)
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
     print("\nPresiona:")
     print("SPACE -> capturar / siguiente paso")
     print("Q o ESC -> salir\n")
 
-    mode = 'capture_id'
+    mode = 'capture_id'  # 'capture_id' o 'verify'
 
     acciones = [
         "Mira hacia la IZQUIERDA",
@@ -185,13 +182,15 @@ def main():
 
         if key == 32:
             print('SPACE detectado')
+
+            # ---------- MODO CAPTURA CÉDULA (ORIGINAL) ----------
             if mode == 'capture_id':
-                # Guardar cédula (igual que original)
                 os.makedirs('data', exist_ok=True)
                 full_path = os.path.join('data', 'id_full.jpg')
                 face_path = os.path.join('data', 'id_face.jpg')
                 cv2.imwrite(full_path, frame)
 
+                # Recortar la foto de la cédula (igual que original)
                 card_w = int(w * 0.905)
                 card_h = int(h * 0.555)
                 card_x = int((w - card_w) / 2)
@@ -206,18 +205,18 @@ def main():
                     print('Error: no se pudo recortar la foto de la cédula.')
                 else:
                     cv2.imwrite(face_path, cropped)
-                    print(f'Foto de cédula guardada en {full_path}, recorte guardado en {face_path}')
+                    print(f'Cédula guardada en {full_path}, recorte en {face_path}')
                     id_path = face_path
                     mode = 'verify'
                     print("Modo verificación activa. Realiza los movimientos indicados y presiona SPACE para cada foto.")
                 continue
 
-            # ----- VERIFICACIÓN CON MOVIMIENTOS (fotos activas) -----
+            # ---------- MODO VERIFICACIÓN ACTIVA (con movimientos) ----------
+            # 1. Tomar 4 fotos con acciones aleatorias
             num_acciones = 4
             acciones_elegidas = random.sample(acciones, num_acciones)
             fotos_movimiento = []
 
-            # Tomar fotos de movimientos
             for i, accion in enumerate(acciones_elegidas):
                 esperando = True
                 while esperando:
@@ -241,7 +240,7 @@ def main():
                         cv2.destroyAllWindows()
                         return
 
-            # Tomar foto final neutral
+            # 2. Tomar foto final neutral
             esperando = True
             while esperando:
                 ret, frame = cap.read()
@@ -271,23 +270,22 @@ def main():
 
             # Calcular movimiento (máxima diferencia entre fotos de movimiento)
             max_movement, mean_movement = compute_movement_score(fotos_movimiento, face_cascade)
-            # UMBRAL configurable: si max_movement >= UMBRAL_MOVIMIENTO -> movimiento real
             hay_movimiento = max_movement >= UMBRAL_MOVIMIENTO
-            semaforo = "VERDE (Movimiento detectado)" if hay_movimiento else "AMARILLO (Posible fraude - poca variación)"
-            print(f"Movimiento máximo entre poses: {max_movement:.4f} (promedio: {mean_movement:.4f}) - {semaforo}")
 
-            # Verificar foto final contra cédula (usando la función original exacta)
+            # Verificar foto final contra cédula usando la función ORIGINAL
             tmp_fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
             os.close(tmp_fd)
             cv2.imwrite(tmp_path, foto_final)
 
             print("\nVerificando rostro con cédula...")
-            result = verify_with_id(tmp_path, id_path)
+            result = verify_with_id(tmp_path, id_path)   # <--- FUNCIÓN ORIGINAL
 
+            # Determinar semáforo según resultado
             if "error" in result:
-                print("Error:", result["error"])
+                print("Error en verificación:", result["error"])
                 msg = "ERROR EN VERIFICACIÓN"
                 color = (0, 0, 255)
+                semaforo = "ROJO (Error)"
                 verificacion_ok = False
                 distance = None
             else:
@@ -295,18 +293,23 @@ def main():
                 distance = result["distance"]
                 verificacion_ok = verified
                 print(f"Resultado DeepFace: verified={verified}, distance={distance:.4f}")
-                if verified:
-                    if hay_movimiento:
-                        msg = f"MATCH ✔ (Movimiento OK) dist={distance:.3f}"
-                        color = (0, 255, 0)
-                    else:
-                        msg = f"MATCH ✔ (POSIBLE FRAUDE) dist={distance:.3f}"
-                        color = (0, 255, 255)
-                else:
+
+                if verified and hay_movimiento:
+                    semaforo = "VERDE (Match + Movimiento)"
+                    msg = f"MATCH ✔ (Movimiento OK) dist={distance:.3f}"
+                    color = (0, 255, 0)
+                elif verified and not hay_movimiento:
+                    semaforo = "AMARILLO (Match + Sin movimiento)"
+                    msg = f"MATCH ✔ (POSIBLE FRAUDE) dist={distance:.3f}"
+                    color = (0, 255, 255)
+                else:  # no verified
+                    semaforo = "ROJO (No Match)"
                     msg = f"NO MATCH ✖ dist={distance:.3f}"
                     color = (0, 0, 255)
 
-            # Mostrar resultado
+            print(f"Semáforo: {semaforo}")
+
+            # Mostrar resultado en pantalla
             display = foto_final.copy()
             cv2.putText(display, msg, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 3)
             cv2.imshow("Resultado", display)
@@ -326,6 +329,7 @@ def main():
             save_log(result_info)
             print("Log guardado en data/resultado_firma.txt")
 
+            # Decidir si abrir la firma (solo si hay MATCH, es decir, VERDE o AMARILLO)
             if verificacion_ok:
                 # Liberar cámara y ventanas
                 cap.release()
@@ -353,15 +357,15 @@ def main():
                         if connected:
                             webbrowser.open(url)
                             print("Interfaz de firma abierta en el navegador.")
-                            if not hay_movimiento:
-                                print("NOTA: Se ha registrado una alerta de posible fraude. La firma será revisada.")
+                            if not hay_movimiento and verified:
+                                print("NOTA: Semáforo AMARILLO. Posible fraude. La firma será revisada.")
                         else:
                             print("No se pudo conectar al servidor de firma.")
                 except Exception as e:
                     print("Error al iniciar servidor de firma:", e)
                 break  # salir del bucle principal
             else:
-                print("Verificación fallida. Presiona SPACE para reintentar.")
+                print("Verificación fallida (Semáforo ROJO). No se abrirá la firma. Presiona SPACE para reintentar.")
                 try:
                     os.remove(tmp_path)
                 except:
